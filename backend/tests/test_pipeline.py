@@ -1161,6 +1161,9 @@ class TestLink3SniffParseStart:
         sniffs = intake_rows("schema_sniff", **{"关联批次": "FI-S001"})
         assert sniffs[0]["首行是否表头"] == "是"
         assert sniffs[0]["status"] == "已推断"
+        # 同次嗅探锁定所用规则版本与列位置，字段解析不得跨规则混用
+        assert sniffs[0]["命中分隔规则"] == "DR-csv"
+        assert sniffs[0]["列位置"] == "0,1"
 
     def test_headerless_file_parses_from_row_one(self, fresh_store):
         orch = ParsePipelineOrchestrator()

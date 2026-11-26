@@ -9,6 +9,15 @@
         <button class="btn primary" data-testid="open-create" type="button" @click="openCreate">
           登记{{ meta.entity }}
         </button>
+        <button
+          v-if="evidenceEnabled"
+          class="btn"
+          data-testid="open-evidence"
+          type="button"
+          @click="openEvidence"
+        >
+          打开采用证据
+        </button>
         <button class="btn" data-testid="export" type="button" @click="exportRows">
           导出{{ meta.name }}清单
         </button>
@@ -70,6 +79,52 @@
       </tbody>
     </table>
 
+    <div v-if="showEvidence" class="modal-backdrop" data-testid="evidence-modal">
+      <div class="modal wide">
+        <h3>采用证据 · {{ meta.name }}</h3>
+        <p class="page-desc">
+          证据来自服务端批次规则版本记录：每次采用的规则版本、同次嗅探、确认列数与迁移状态。
+        </p>
+        <form class="filter-bar" @submit.prevent="queryEvidence">
+          <label class="filter-item">
+            <span>关联批次</span>
+            <input v-model="evidenceQuery.intakeBatch" data-testid="evidence-input-batch" placeholder="FI-xxx" />
+          </label>
+          <label class="filter-item">
+            <span>规则编号</span>
+            <input v-model="evidenceQuery.ruleNo" data-testid="evidence-input-rule" placeholder="DR-xxx" />
+          </label>
+          <button class="btn primary" data-testid="evidence-query" type="submit">查询证据</button>
+          <button class="btn ghost" type="button" @click="showEvidence = false">关闭</button>
+        </form>
+        <table class="data-table compact">
+          <thead>
+            <tr>
+              <th>版本记录</th><th>批次</th><th>规则</th><th>版本</th><th>轮次</th>
+              <th>采用状态</th><th>嗅探</th><th>确认列数</th><th>起始行</th><th>迁移状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in evidenceItems" :key="String(item.版本记录编号)">
+              <td>{{ item.版本记录编号 }}</td>
+              <td>{{ item.关联批次 }}</td>
+              <td>{{ item.规则编号 }}</td>
+              <td>{{ item.规则版本号 }}</td>
+              <td>{{ item.采用轮次 }}</td>
+              <td>{{ item.采用状态 }}</td>
+              <td>{{ item.结构嗅探编号 || '—' }}</td>
+              <td>{{ item.确认列数 }}</td>
+              <td>{{ item.起始行 }}</td>
+              <td>{{ item.迁移状态 ?? '—' }}</td>
+            </tr>
+            <tr v-if="!evidenceItems.length">
+              <td colspan="10" class="empty-state">暂无符合条件的采用证据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记{{ meta.entity }}</h3>
@@ -103,10 +158,13 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
+import { fetchEvidence, type EvidenceItem } from '@/api/rule-migration'
 import type { EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()
 const meta = moduleMeta(props.moduleKey)
+// 结构嗅探页与分隔规则页都能打开同一份采用证据
+const evidenceEnabled = props.moduleKey === 'schema_sniff' || props.moduleKey === 'delimiter_rule'
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
@@ -115,6 +173,9 @@ const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+const showEvidence = ref(false)
+const evidenceItems = ref<EvidenceItem[]>([])
+const evidenceQuery = ref({ intakeBatch: '', ruleNo: '' })
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
   { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
@@ -184,6 +245,26 @@ async function reload() {
     total.value = payload.total
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '业务列表读取失败'
+  }
+}
+
+function openEvidence() {
+  // 分隔规则页默认按当前行规则号、嗅探页默认按关联批次带入，也可手工改
+  evidenceQuery.value = {
+    intakeBatch: props.moduleKey === 'schema_sniff' ? '' : '',
+    ruleNo: props.moduleKey === 'delimiter_rule' ? '' : '',
+  }
+  evidenceItems.value = []
+  showEvidence.value = true
+}
+
+async function queryEvidence() {
+  errorMessage.value = ''
+  try {
+    const result = await fetchEvidence(evidenceQuery.value.intakeBatch, evidenceQuery.value.ruleNo)
+    evidenceItems.value = result.items
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '采用证据读取失败'
   }
 }
 

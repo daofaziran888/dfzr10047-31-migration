@@ -277,6 +277,8 @@ class ParsePipelineOrchestrator:
             "列类型推断": ";".join(sniff.column_types),
             "首行是否表头": "是" if sniff.first_row_is_header else "否",
             "嗅探置信度": f"{sniff.confidence:.2f}",
+            "命中分隔规则": sniff.rule_id,
+            "列位置": ",".join(str(p) for p in sniff.column_positions),
         }, status="已推断" if usable else "低置信",
             pending=not usable, abnormal=not usable)
 

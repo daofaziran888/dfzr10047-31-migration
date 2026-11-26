@@ -29,3 +29,59 @@ class EntryPayload(BaseModel):
 class ActionPayload(BaseModel):
     action: str
     remark: str | None = None
+
+
+# ---------------------------------------------------------------------
+# 规则迁移专用接口请求体
+# ---------------------------------------------------------------------
+class SamplePayload(BaseModel):
+    sample_lines: list[str] = Field(default_factory=list)
+
+
+class MigrationCreatePayload(BaseModel):
+    migration_no: str
+    fmt: str
+    old_rule_no: str
+    new_rule_no: str
+    sample_lines: list[str] = Field(default_factory=list)
+    operator: str = "on-duty"
+    at: str = ""
+
+
+class MigrationActionPayload(BaseModel):
+    reason: str = ""
+    operator: str = "on-duty"
+    at: str = ""
+
+
+class ClaimPayload(BaseModel):
+    migration_no: str
+    intake_batch: str
+    operator: str = "on-duty"
+    at: str = ""
+
+
+class BindPayload(BaseModel):
+    record_no: str
+    sniff_no: str
+    at: str = ""
+
+
+class RecordActionPayload(BaseModel):
+    at: str = ""
+
+
+class RestorePayload(BaseModel):
+    intake_batch: str
+    operator: str = "on-duty"
+    at: str = ""
+
+
+class ParsePayload(BaseModel):
+    intake_batch: str
+    data_lines: list[str] = Field(default_factory=list)
+
+
+class GuidancePayload(BaseModel):
+    intake_batch: str
+    operator: str = "on-duty"

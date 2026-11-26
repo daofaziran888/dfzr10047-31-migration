@@ -4,35 +4,33 @@
 - 对样本行按分隔规则试切分，推断列数与列类型
 - 首行是否表头的结论直接改变字段解析的起始行（1 或 2）
 - 同一段文本在不同分隔规则下会切出不同列数，规则切换时置信度下降
+- 嗅探结论携带所用规则编号与逐列位置，字段解析只能绑定同一次嗅探，
+  切换规则时规则编号不一致即拒绝混用
 """
 from __future__ import annotations
 
-import csv
-import io
 from typing import Any
+
+from app.pipeline.csv_split import split_line as _split_line
 
 
 class DelimiterRule:
     """分隔规则条目。"""
 
     def __init__(self, rule_id: str, fmt: str, delimiter: str,
-                 quotechar: str, escapechar: str):
+                 quotechar: str, escapechar: str,
+                 version_label: str = ""):
         self.rule_id = rule_id
         self.fmt = fmt
         self.delimiter = delimiter
         self.quotechar = quotechar
         self.escapechar = escapechar
+        self.version_label = version_label
         self.hit_batches: list[str] = []
 
     def split_line(self, line: str) -> list[str]:
-        """按规则切分一行。"""
-        reader = csv.reader(
-            io.StringIO(line), delimiter=self.delimiter,
-            quotechar=self.quotechar, escapechar=self.escapechar,
-        )
-        for row in reader:
-            return row
-        return []
+        """按规则切分一行（引号/转义行为与历史实现一致）。"""
+        return _split_line(line, self.delimiter, self.quotechar, self.escapechar)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,7 +49,8 @@ class SniffResult:
     def __init__(self, batch_id: str, sample_rows: int, column_count: int,
                  column_names: list[str], column_types: list[str],
                  first_row_is_header: bool, confidence: float,
-                 parse_start_row: int):
+                 parse_start_row: int, rule_id: str = "",
+                 column_positions: list[int] | None = None):
         self.batch_id = batch_id
         self.sample_rows = sample_rows
         self.column_count = column_count
@@ -60,6 +59,10 @@ class SniffResult:
         self.first_row_is_header = first_row_is_header
         self.confidence = confidence
         self.parse_start_row = parse_start_row
+        # 嗅探所用规则版本：字段解析绑定时必须与此一致，防止跨规则混用
+        self.rule_id = rule_id
+        # 每列在切分结果中的位置（0 基），与列名同序产出
+        self.column_positions = list(column_positions or [])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +74,8 @@ class SniffResult:
             "first_row_is_header": self.first_row_is_header,
             "confidence": self.confidence,
             "parse_start_row": self.parse_start_row,
+            "rule_id": self.rule_id,
+            "column_positions": self.column_positions,
         }
 
 
@@ -139,14 +144,31 @@ class StructureSniffer:
             return "datetime"
         return "str"
 
-    def sniff(self, batch_id: str, fmt: str, sample_lines: list[str]) -> tuple[bool, SniffResult]:
-        """对样本行执行结构嗅探。返回 (是否可用, 推断结果)。"""
+    def sniff(self, batch_id: str, fmt: str,
+              sample_lines: list[str]) -> tuple[bool, SniffResult]:
+        """对样本行执行结构嗅探。返回 (是否可用, 推断结果)。
+
+        推断结果携带所用规则编号，供字段解析侧做同次嗅探一致性校验。
+        """
         rule = self.get_active_rule(fmt)
         if rule is None:
             result = SniffResult(batch_id, len(sample_lines), 0, [], [], False, 0.0, 1)
             self._sniffs[batch_id] = result
             return False, result
+        return self._sniff_with_rule(batch_id, rule, sample_lines)
 
+    def sniff_with_rule(self, batch_id: str, rule_id: str,
+                        sample_lines: list[str]) -> tuple[bool, SniffResult]:
+        """按指定规则编号执行嗅探：迁移场景下显式锁定规则版本，避免取到别的生效规则。"""
+        rule = self._rules.get(rule_id)
+        if rule is None:
+            result = SniffResult(batch_id, 0, 0, [], [], False, 0.0, 1)
+            self._sniffs[batch_id] = result
+            return False, result
+        return self._sniff_with_rule(batch_id, rule, sample_lines)
+
+    def _sniff_with_rule(self, batch_id: str, rule: DelimiterRule,
+                         sample_lines: list[str]) -> tuple[bool, SniffResult]:
         rule.hit_batches.append(batch_id)
         split_rows = [rule.split_line(line) for line in sample_lines if line.strip()]
         if len(split_rows) < 2:
@@ -154,7 +176,7 @@ class StructureSniffer:
             result = SniffResult(
                 batch_id, len(split_rows),
                 len(split_rows[0]) if split_rows else 0,
-                [], [], False, 0.30, 1)
+                [], [], False, 0.30, 1, rule_id=rule.rule_id)
             self._sniffs[batch_id] = result
             return False, result
 
@@ -194,13 +216,30 @@ class StructureSniffer:
             consistency * (0.95 if first_row_is_header or column_count <= 8 else 0.7), 2
         )
         parse_start_row = 2 if first_row_is_header else 1
+        column_positions = list(range(column_count))
 
         result = SniffResult(
             batch_id, len(split_rows), column_count, column_names,
             column_types, first_row_is_header, confidence, parse_start_row,
+            rule_id=rule.rule_id, column_positions=column_positions,
         )
         self._sniffs[batch_id] = result
         return confidence >= self.LOW_CONFIDENCE, result
+
+    def guard_same_sniff(self, batch_id: str, rule_id: str) -> tuple[bool, str]:
+        """同次嗅探守卫：字段解析所用规则必须与嗅探锁定规则一致，否则拒绝混用。"""
+        result = self._sniffs.get(batch_id)
+        if result is None:
+            return False, f"批次 {batch_id} 尚无结构嗅探结论，解析依据缺失"
+        if not result.rule_id:
+            # 历史嗅探未记录规则编号时按兼容口径放行，不阻断老批次重放
+            return True, "历史嗅探无规则编号，按兼容口径放行"
+        if result.rule_id != rule_id:
+            return False, (
+                f"批次 {batch_id} 嗅探锁定规则 {result.rule_id}，"
+                f"与待采用规则 {rule_id} 不一致，切换不得混用"
+            )
+        return True, f"规则 {rule_id} 与同次嗅探一致"
 
     def get_sniff(self, batch_id: str) -> SniffResult | None:
         return self._sniffs.get(batch_id)

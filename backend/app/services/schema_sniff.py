@@ -113,12 +113,12 @@ class SchemaSniffService(BaseModuleService):
             "首行是否表头": "是" if is_header else "否",
             "嗅探置信度": f"{confidence:.2f}",
             "命中分隔规则": delimiter_rule_no,
+            "列位置": ",".join(str(i) for i in range(column_count)),
             "status": status,
             "pending": status != "已推断",
             "abnormal": status == "推断冲突",
         })
         return status == "已推断", conclusion, dict(target)
-
     def parse_start_row(self, sniff_no: str) -> int:
         """输出字段解析消费的起始行：表头行为 2，否则为 1。"""
         for row in store.rows(self.MODULE):

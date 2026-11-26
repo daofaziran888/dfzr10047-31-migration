@@ -12,6 +12,8 @@ from app.services.row_quarantine import RowQuarantineService
 from app.services.parse_batch import ParseBatchService
 from app.services.schema_sniff import SchemaSniffService
 from app.services.delimiter_rule import DelimiterRuleService
+from app.services.batch_rule_version import BatchRuleVersionService
+from app.services.rule_migration import RuleMigrationService
 from app.services.nested_flatten import NestedFlattenService
 from app.services.value_cast import ValueCastService
 from app.services.unit_normalize import UnitNormalizeService
@@ -36,6 +38,8 @@ SERVICES: dict[str, BaseModuleService] = {
     "parse_batch": ParseBatchService(),
     "schema_sniff": SchemaSniffService(),
     "delimiter_rule": DelimiterRuleService(),
+    "batch_rule_version": BatchRuleVersionService(),
+    "rule_migration": RuleMigrationService(),
     "nested_flatten": NestedFlattenService(),
     "value_cast": ValueCastService(),
     "unit_normalize": UnitNormalizeService(),
